@@ -54,7 +54,7 @@ final class Box_Installer
         include 'session.php';
         $this->session = new Session();
     }
-    
+
     public function run($action)
     {
         switch ($action) {
@@ -73,7 +73,7 @@ final class Box_Installer
                     $this->session->set('db_pass', $pass);
                     print 'ok';
                 }
-        
+
                 break;
 
             case 'install':
@@ -120,7 +120,7 @@ final class Box_Installer
                 } catch(Exception $e) {
                     print $e->getMessage();
                 }
-                
+
                 break;
 
             case 'index':
@@ -160,14 +160,14 @@ final class Box_Installer
                     'config_file_path'=>BB_PATH_CONFIG,
                     'live_site'=>BB_URL,
                     'admin_site'=>BB_URL_ADMIN,
-                    
+
                     'domain' => pathinfo(BB_URL, PATHINFO_BASENAME),
                 );
                 print $this->render('install.phtml', $vars);
                 break;
         }
     }
-    
+
     private function render($name, $vars = array())
     {
         $options = array(
@@ -186,7 +186,7 @@ final class Box_Installer
         $twig->addGlobal('version', Box_Version::VERSION);
         return $twig->render($name, $vars);
     }
-    
+
     private function getLicense()
     {
         $path = BB_PATH_LICENSE;
@@ -198,14 +198,10 @@ final class Box_Installer
 
     private function canConnectToDatabase($host, $db, $user, $pass)
     {
-        $link = @mysql_connect($host, $user, $pass);
+        $link = @mysqli_connect($host, $user, $pass, $db);
         if ($link) {
-            $db_selected = @mysql_select_db($db, $link);
-            if($db_selected) {
-                mysql_close($link);
-                return true;
-            }
-            mysql_close($link);
+            mysqli_close($link);
+            return true;
         }
         return false;
     }
@@ -241,33 +237,27 @@ final class Box_Installer
             throw new Exception('Create configuration file bb-config.php with content provided during installation.');
         }
     }
-    
+
     private function makeInstall($ns)
     {
         $this->_isValidInstallData($ns);
         $this->_createConfigurationFile($ns);
 
-        $link = @mysql_connect($ns->get('db_host'), $ns->get('db_user'), $ns->get('db_pass'));
+        $link = @mysqli_connect($ns->get('db_host'), $ns->get('db_user'), $ns->get('db_pass'), $ns->get('db_name'));
 
         if (!$link) {
             throw new Exception('Could not connect to database');
         }
 
-        $db_selected = @mysql_select_db($ns->get('db_name'), $link);
+        mysqli_query($link, "SET NAMES 'utf8'");
 
-        if (!$db_selected) {
-            throw new Exception('Could not select database');
-        }
-
-        mysql_query("SET NAMES 'utf8'");
-        
         /*
-        $qry = mysql_query("SHOW TABLES;");
-        while($res = mysql_fetch_array($qry)) {
-            $dropqry = mysql_query("DROP TABLE $res[0];");
+        $qry = mysqli_query($link, "SHOW TABLES;");
+        while($res = mysqli_fetch_array($qry)) {
+            $dropqry = mysqli_query($link, "DROP TABLE $res[0];");
         }
         */
-        
+
         $sql = file_get_contents(BB_PATH_SQL);
         if(!$sql) {
             throw new Exception('Could not read structure.sql file');
@@ -285,8 +275,8 @@ final class Box_Installer
         $err = '';
         foreach ($sql as $query) {
             if (!trim($query)) continue;
-            $res = mysql_query($query, $link);
-            $err .= mysql_error();
+            $res = mysqli_query($link, $query);
+            $err .= mysqli_error($link);
         }
 
         if(!empty($err)) {
@@ -294,13 +284,13 @@ final class Box_Installer
         }
         $passwordObject = new \Box_Password();
         $sql = "INSERT INTO admin (role, name, email, pass, protected, created_at, updated_at) VALUES('admin', '%s', '%s', '%s', 1, NOW(), NOW());";
-        $sql = sprintf($sql, mysql_real_escape_string($ns->get('admin_name')), mysql_real_escape_string($ns->get('admin_email')), mysql_real_escape_string($passwordObject->hashIt($ns->get('admin_pass'))));
-        $res = mysql_query($sql, $link);
+        $sql = sprintf($sql, mysqli_real_escape_string($link, $ns->get('admin_name')), mysqli_real_escape_string($link, $ns->get('admin_email')), mysqli_real_escape_string($link, $passwordObject->hashIt($ns->get('admin_pass'))));
+        $res = mysqli_query($link, $sql);
         if(!$res) {
-            throw new Exception(mysql_error());
+            throw new Exception(mysqli_error($link));
         }
 
-        mysql_close($link);
+        mysqli_close($link);
 
         try {
             $this->_sendMail($ns);
@@ -396,7 +386,7 @@ final class Box_Installer
 
         $output .= sprintf($cf, 'Define timezone');
         $output .= sprintf("date_default_timezone_set('%s');", 'UTC');
-        
+
         $output .= sprintf($cf, 'Set default date format');
         $output .= sprintf($f, 'BB_DATE_FORMAT', 'l, d F Y');
 
@@ -409,28 +399,28 @@ final class Box_Installer
 
         $output .= sprintf($cf, 'Live site URL with trailing slash');
         $output .= sprintf($f, 'BB_URL', BB_URL);
-        
+
         $output .= sprintf($cf, 'BoxBilling license key');
         $output .= sprintf($f, 'BB_LICENSE', $ns->get('license'));
 
         $output .= sprintf($cf, 'Enable or disable warning messages');
         $output .= sprintf($bf, 'BB_DEBUG', 'TRUE');
-        
+
         $output .= sprintf($cf, 'Enable or disable pretty urls. Please configure .htaccess before enabling this feature.');
         $output .= sprintf($bf, 'BB_SEF_URLS', 'FALSE');
-        
+
         $output .= sprintf($cf, 'Default application locale');
         $output .= sprintf($bf, 'BB_LOCALE', "'en_US'");
-        
+
         $output .= sprintf($cf, 'Translatable locale format');
         $output .= sprintf($bf, 'BB_LOCALE_DATE_FORMAT', "'%A, %d %B %G'");
-        
+
         $output .= sprintf($cf, 'Translatable time format');
         $output .= sprintf($bf, 'BB_LOCALE_TIME_FORMAT', "' %T'");
-        
+
         $output .= sprintf($cf, 'Default location to store application data. Must be protected from public.');
         $output .= sprintf($bf, 'BB_PATH_DATA', "dirname(__FILE__) . '/bb-data'");
-        
+
         return $output;
     }
 
